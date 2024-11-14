@@ -26,7 +26,17 @@ def get_init_image_ids(scene_graph: dict) -> (str, str):
     """
     max_pair = [None, None]  # dummy value
     """ YOUR CODE HERE """
-    
+    max_num_inliers = 0
+    for image_id1, neighbors in scene_graph.items():
+        # Using vectorized operations instead of an explicit loop for matching pairs
+        for image_id2 in neighbors:
+
+            matches = load_matches(image_id1=image_id1, image_id2=image_id2)
+            num_inliers = matches.shape[0]
+
+            if num_inliers > max_num_inliers:
+                max_num_inliers = num_inliers
+                max_pair = [image_id1, image_id2]
 
 
     """ END YOUR CODE HERE """
@@ -78,8 +88,13 @@ def get_init_extrinsics(image_id1: str, image_id2: str, intrinsics: np.ndarray) 
 
     extrinsics2 = np.zeros(shape=[3, 4], dtype=float)
     """ YOUR CODE HERE """
-    
+    extrinsics1 = np.array([[1, 0, 0, 0],
+                            [0, 1, 0, 0],
+                            [0, 0, 1, 0]])
 
+    # Find extrinsic for image_id2
+    _, R, t, _ = cv2.recoverPose(E=essential_mtx, points1=points2d_1, points2=points2d_2, cameraMatrix=intrinsics)
+    extrinsics2 = np.concatenate((R, t), axis=1)
 
     """ END YOUR CODE HERE """
     return extrinsics1, extrinsics2
@@ -154,9 +169,21 @@ def get_reprojection_residuals(points2d: np.ndarray, points3d: np.ndarray, intri
     """
     residuals = np.zeros(points2d.shape[0])
     """ YOUR CODE HERE """
-   
+    homo_3d_points = np.hstack((points3d, np.ones((points3d.shape[0], 1))))  # N x 4
 
 
+    extrinsics = np.hstack((rotation_mtx, tvec.reshape(-1, 1)))  # 3 x 4
+
+
+    P = np.matmul(intrinsics, extrinsics)  # 3 x 4
+
+
+    projected_points = np.matmul(P, homo_3d_points.T)  # 3 x N
+    projected_points /= projected_points[2, :]  # 对齐次坐标进行归一化
+    projected_points = projected_points[:2, :].T  # 取前两行并转置为 N x 2
+
+
+    residuals = np.linalg.norm(points2d - projected_points, axis=1)
     """ END YOUR CODE HERE """
     return residuals
 
@@ -202,9 +229,19 @@ def solve_pnp(image_id: str, point2d_idxs: np.ndarray, all_points3d: np.ndarray,
         2. convert the returned rotation vector to rotation matrix using cv2.Rodrigues
         3. compute the reprojection residuals
         """
-       
+        _, rotation_vector, tvec = cv2.solvePnP(objectPoints=selected_pts3d,
+                                                imagePoints=selected_pts2d,
+                                                cameraMatrix=intrinsics,
+                                                distCoeffs=None,
+                                                flags=cv2.SOLVEPNP_ITERATIVE)
 
+        rotation_mtx, _ = cv2.Rodrigues(rotation_vector)
 
+        residuals = get_reprojection_residuals(points2d=points2d,
+                                               points3d=points3d,
+                                               intrinsics=intrinsics,
+                                               rotation_mtx=rotation_mtx,
+                                               tvec=tvec)
         """ END YOUR CODE HERE """
 
         is_inlier = residuals <= inlier_threshold
@@ -254,9 +291,13 @@ def add_points3d(image_id1: str, image_id2: str, all_extrinsic: dict, intrinsics
     triangulate between the image points for the unregistered matches for image_id1 and image_id2 to get new points3d
     new_points3d = triangulate(..., kp_idxs1=matches[:, 0], kp_idxs2=matches[:, 1], ...)
     """
-    
-
-
+    new_points3d = triangulate(image_id1=image_id1,
+                               image_id2=image_id2,
+                               kp_idxs1=matches[:, 0],
+                               kp_idxs2=matches[:, 1],
+                               extrinsics1=all_extrinsic[image_id1],
+                               extrinsics2=all_extrinsic[image_id2],
+                               intrinsics=intrinsics)
     """ END YOUR CODE HERE """
 
     num_new_points3d = new_points3d.shape[0]
@@ -285,10 +326,17 @@ def get_next_pair(scene_graph: dict, registered_ids: list):
     """
     max_new_id, max_registered_id, max_num_inliers = None, None, 0
     """ YOUR CODE HERE """
-    
-
-
-    
+    registered_set = set(registered_ids)
+    for registered_id in registered_ids:
+        for new_id in scene_graph[registered_id]:
+            if new_id not in registered_set:
+                matches = load_matches(registered_id, new_id)
+                num_inliers = matches.shape[0]
+                # Update if this pair has more inliers
+                if num_inliers > max_num_inliers:
+                    max_num_inliers = num_inliers
+                    max_new_id = new_id
+                    max_registered_id = registered_id
     """ END YOUR CODE HERE """
     return max_new_id, max_registered_id
 

@@ -114,12 +114,13 @@ def detect_keypoints(image_file: os.path):
     image_id = os.path.basename(image_file)[:-4]
     save_file = os.path.join(KEYPOINT_DIR, image_id + '.pkl')
 
-    keypoints, descriptors = [], []
+
     """ YOUR CODE HERE:
     Detect keypoints using cv2.SIFT_create() and sift.detectAndCompute
     """
-    
-
+    image = cv2.imread(image_file, cv2.IMREAD_GRAYSCALE)
+    sift = cv2.SIFT_create()
+    keypoints, descriptors = sift.detectAndCompute(image, None)
 
     """ END YOUR CODE HERE. """
 
@@ -167,7 +168,12 @@ def create_feature_matches(image_file1: os.path, image_file2: os.path, lowe_rati
     1. Run cv.BFMatcher() and matcher.knnMatch(descriptors1, descriptors2, 2)
     2. Filter the feature matches using the Lowe ratio test.
     """
-    
+    bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=False)
+    knn_matches = bf.knnMatch(descriptors1, descriptors2, k=2)
+
+    for m, n in knn_matches:
+        if m.distance < lowe_ratio * n.distance:
+            good_matches.append([m])
 
 
     """ END YOUR CODE HERE. """
@@ -242,7 +248,15 @@ def create_ransac_matches(image_file1: os.path, image_file2: os.path,
     Perform goemetric verification by finding the essential matrix between keypoints in the first image and keypoints in
     the second image using cv2.findEssentialMatrix(..., method=cv2.RANSAC, threshold=ransac_threshold, ...)
     """
-    
+    essential_mtx, inliers = cv2.findEssentialMat(
+        points1, points2,
+        cameraMatrix=camera_intrinsics,
+        method=cv2.RANSAC,
+        prob=0.999,
+        threshold=ransac_threshold
+    )
+
+    is_inlier=inliers.astype(bool).ravel()
 
 
     """ END YOUR CODE HERE """
@@ -278,7 +292,21 @@ def create_scene_graph(image_files: list, min_num_inliers: int = 40):
     Add edges to <graph> if the minimum number of geometrically verified inliers between images is at least  
     <min_num_inliers> 
     """
-    
+    num_images = len(image_files)
+
+    for i in range(num_images):
+        for j in range(i + 1, num_images):  # 只遍历每对组合一次，避免重复
+            match_id = f"{image_ids[i]}_{image_ids[j]}"
+            match_file = os.path.join(RANSAC_MATCH_DIR, match_id + ".npy")
+
+            # 检查匹配文件是否存在
+            if not os.path.exists(match_file):
+                continue
+
+            # 加载匹配数据，检查内点数量
+            inlier_matches = np.load(match_file)
+            if inlier_matches.shape[0] >= min_num_inliers:
+                graph.add_edge(i, j)
 
     
     """ END YOUR CODE HERE """
